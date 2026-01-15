@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  api-proxy:
+    # 指向 Dockerfile 的路径，"." 表示当前部署目录
+    build: . 
+    container_name: api-proxy_service
+    # 如果您在 main.go 中配置的端口是 7890，那么这里保持 7890
+    ports:
+      - "7890:7890" # 映射：将主机的 80 端口映射到容器内的 7890 端口
+    restart: always
