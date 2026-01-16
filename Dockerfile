@@ -7,7 +7,7 @@ COPY main.go .
 RUN go build -ldflags "-s -w" -o api-proxy main.go
 
 # 阶段二: 运行
-FROM alpine:latest
+FROM alpine:3.19
 WORKDIR /app
 # 从编译阶段复制可执行文件
 COPY --from=builder /app/api-proxy .
