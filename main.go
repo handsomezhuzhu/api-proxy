@@ -11,8 +11,8 @@ import (
 )
 
 var apiMapping = map[string]string{
-	"/discord":     "https://discord.com/api",
-	"/telegram":    "https://api.telegram.org",
+//	"/discord":     "https://discord.com/api",
+//	"/telegram":    "https://api.telegram.org",
 	"/openai":      "https://api.openai.com",
 	"/claude":      "https://api.anthropic.com",
 	"/gemini":      "https://generativelanguage.googleapis.com",
