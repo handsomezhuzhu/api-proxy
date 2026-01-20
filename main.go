@@ -311,14 +311,14 @@ func init() {
 			// Nginx 和大部分 CDN 识别这个 Header 来禁用缓冲
 			res.Header.Set("X-Accel-Buffering", "no")
 
-			// 确保如果是流式传输，Cache-Control 设置正确
-			// content-type 包含 event-stream 时，强制不缓存
+			// [修改点] 针对经过代理的所有请求，强制添加禁止缓存头
+			// 配合 CDN 的 "遵循源站" 策略，实现精细化控制
+			res.Header.Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			res.Header.Set("Pragma", "no-cache")
+			res.Header.Set("Expires", "0")
+
+			// 针对流式传输的额外强化
 			if strings.Contains(res.Header.Get("Content-Type"), "event-stream") {
-				res.Header.Set("Cache-Control", "no-cache")
-				res.Header.Set("Connection", "keep-alive")
-			}
-			return nil
-		}
 
 		// Optional: Custom error handler
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
