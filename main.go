@@ -13,6 +13,10 @@ import (
 	"time"
 )
 
+const (
+	Version = "1.1.0"
+)
+
 var (
 	proxyMap = make(map[string]*httputil.ReverseProxy)
 	tpl      *template.Template
@@ -190,7 +194,7 @@ const htmlTemplate = `<!DOCTYPE html>
             </table>
         </div>
         <div class="footer">
-            AI API Proxy &copy; 2024
+            AI API Proxy v{{.Version}} &copy; 2024
             <br>
             Maintainer: <a href="https://zhuzihan.com" target="_blank" style="color: inherit; text-decoration: none; border-bottom: 1px dashed currentColor;">Simon</a>
         </div>
@@ -199,7 +203,8 @@ const htmlTemplate = `<!DOCTYPE html>
 </html>`
 
 type PageData struct {
-	Items []MappingItem
+	Items   []MappingItem
+	Version string
 }
 
 type MappingItem struct {
@@ -360,7 +365,10 @@ func renderHome(w http.ResponseWriter) {
 		return items[i].Path < items[j].Path
 	})
 
-	if err := tpl.Execute(w, PageData{Items: items}); err != nil {
+	if err := tpl.Execute(w, PageData{
+		Items:   items,
+		Version: Version,
+	}); err != nil {
 		log.Printf("Template execution error: %v", err)
 	}
 }
