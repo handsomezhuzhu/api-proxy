@@ -317,8 +317,8 @@ func init() {
 			res.Header.Set("Pragma", "no-cache")
 			res.Header.Set("Expires", "0")
 
-			// 针对流式传输的额外强化
-			if strings.Contains(res.Header.Get("Content-Type"), "event-stream") {
+			return nil
+		}
 
 		// Optional: Custom error handler
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
