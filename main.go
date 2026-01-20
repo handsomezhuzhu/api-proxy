@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	Version = "1.1.0"
+	Version = "1.2.0"
 )
 
 var (
@@ -23,10 +23,11 @@ var (
 )
 
 // Denied headers that should not be forwarded to the upstream API
-var deniedHeaderPrefixes = []string{"cf-", "forward", "cdn"}
+// x-real-ip is denied to prevent leaking internal IP structures if behind multiple proxies
+var deniedHeaderPrefixes = []string{"cf-", "forward", "cdn", "x-real-ip"}
 var deniedExactHeaders = map[string]bool{
-	"host":                true,
-	"referer":             true,
+	"host": true,
+	// "referer":             true, // 有些 CDN 防盗链可能需要 referer
 	"connection":          true,
 	"keep-alive":          true,
 	"proxy-authenticate":  true,
@@ -212,6 +213,16 @@ type MappingItem struct {
 	Target string
 }
 
+type loggingResponseWriter struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (lrw *loggingResponseWriter) WriteHeader(code int) {
+	lrw.statusCode = code
+	lrw.ResponseWriter.WriteHeader(code)
+}
+
 var apiMapping = map[string]string{
 	//	"/discord":     "https://discord.com/api",
 	//	"/telegram":    "https://api.telegram.org",
@@ -231,8 +242,23 @@ var apiMapping = map[string]string{
 	"/cerebras":    "https://api.cerebras.ai",
 }
 
+// 获取请求的真实 IP，优先获取 CDN 传递的 Header
+func getClientIP(r *http.Request) string {
+	// 阿里 CDN (ESA) 通常会把真实 IP 放在 X-Forwarded-For 的第一个
+	// 或者尝试获取 Ali-Cdn-Real-Ip
+	if ip := r.Header.Get("Ali-Cdn-Real-Ip"); ip != "" {
+		return ip
+	}
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		return strings.TrimSpace(parts[0])
+	}
+	return r.RemoteAddr
+}
+
 func init() {
 	// Parse template
+
 	var err error
 	tpl, err = template.New("index").Parse(htmlTemplate)
 	if err != nil {
@@ -280,10 +306,28 @@ func init() {
 			req.Header.Del("X-Forwarded-For")
 		}
 
+		// 新增：ModifyResponse 强制禁用 CDN 缓存
+		proxy.ModifyResponse = func(res *http.Response) error {
+			// Nginx 和大部分 CDN 识别这个 Header 来禁用缓冲
+			res.Header.Set("X-Accel-Buffering", "no")
+
+			// 确保如果是流式传输，Cache-Control 设置正确
+			// content-type 包含 event-stream 时，强制不缓存
+			if strings.Contains(res.Header.Get("Content-Type"), "event-stream") {
+				res.Header.Set("Cache-Control", "no-cache")
+				res.Header.Set("Connection", "keep-alive")
+			}
+			return nil
+		}
+
 		// Optional: Custom error handler
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
-			log.Printf("Proxy error for %s: %v", r.URL.Path, err)
-			http.Error(w, "Bad Gateway", http.StatusBadGateway)
+			clientIP := getClientIP(r)
+			log.Printf("[ERROR] Client: %s | Target: %s | Error: %v", clientIP, targetURL.Host, err)
+
+			// 返回 JSON 格式错误，方便 AI 客户端解析
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `{"error": {"message": "Proxy Connection Error: %v", "type": "proxy_error"}}`, err)
 		}
 
 		proxyMap[path] = proxy
@@ -291,17 +335,28 @@ func init() {
 }
 
 func handler(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+	clientIP := getClientIP(r)
+
+	// 包装 Writer 记录状态码
+	lrw := &loggingResponseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+
+	// 简单日志
+	if r.URL.Path != "/" {
+		log.Printf("[REQ] %s %s from %s", r.Method, r.URL.Path, clientIP)
+	}
+
 	// 1. Handle Home Page
 	if r.URL.Path == "/" || r.URL.Path == "/index.html" {
-		renderHome(w)
+		renderHome(lrw)
 		return
 	}
 
 	// 2. Handle Robots.txt
 	if r.URL.Path == "/robots.txt" {
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusOK)
-		fmt.Fprint(w, "User-agent: *\nDisallow: /")
+		lrw.Header().Set("Content-Type", "text/plain")
+		lrw.WriteHeader(http.StatusOK)
+		fmt.Fprint(lrw, "User-agent: *\nDisallow: /")
 		return
 	}
 
@@ -322,7 +377,8 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if matchedPrefix == "" {
-		http.Error(w, "Not Found", http.StatusNotFound)
+		http.Error(lrw, "Not Found", http.StatusNotFound)
+		log.Printf("[404] Path: %s | IP: %s", path, clientIP)
 		return
 	}
 
@@ -347,7 +403,13 @@ func handler(w http.ResponseWriter, r *http.Request) {
 	// - Header copying (with hop-by-hop removal)
 	// - Body copying
 	// - Streaming responses
-	proxy.ServeHTTP(w, r)
+	proxy.ServeHTTP(lrw, r)
+
+	// 只有非 200 或者耗时较长时才打印结束日志，避免日志刷屏
+	duration := time.Since(startTime)
+	if lrw.statusCode != 200 || duration > 5*time.Second {
+		log.Printf("[RES] %d | %v | %s -> %s", lrw.statusCode, duration, path, apiMapping[matchedPrefix])
+	}
 }
 
 func renderHome(w http.ResponseWriter) {
@@ -388,7 +450,7 @@ func main() {
 		IdleTimeout:  60 * time.Second, // Keep-alive connection idle time
 	}
 
-	log.Printf("Starting proxy server on " + server.Addr)
+	log.Printf("Starting proxy server on %s (Behind CDN mode)", server.Addr)
 	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
