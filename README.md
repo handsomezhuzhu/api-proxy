@@ -96,6 +96,26 @@ go build -o api-proxy main.go
 ./api-proxy 8080
 ```
 
+### 可选安全开关（默认关闭）
+
+你可以在部署时通过环境变量开启请求体大小限制和基础限流；不设置时保持“开放代理”行为。
+
+```bash
+# 限制请求体最大 10MB（0 或不设置=关闭）
+export PROXY_MAX_BODY_BYTES=10485760
+
+# 基础限流：每个客户端 IP 每秒 5 个请求，突发 10（任一为 0 或不设置=关闭）
+export PROXY_RATE_LIMIT_RPS=5
+export PROXY_RATE_LIMIT_BURST=10
+
+./api-proxy
+```
+
+说明：
+- `PROXY_MAX_BODY_BYTES`: 请求体上限（字节）
+- `PROXY_RATE_LIMIT_RPS`: 每秒补充 token 数
+- `PROXY_RATE_LIMIT_BURST`: 桶容量；若只设置 `RPS`，会自动取 `ceil(RPS)`
+
 ## 使用示例
 
 假设你的服务运行在 `http://localhost:7890`。
